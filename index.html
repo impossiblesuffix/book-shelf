@@ -1324,10 +1324,12 @@
         .subscribe();
     }
 
+    let _userEmail = '';
+
     async function startApp(session) {
+      _userEmail = session.user.email;
       loadFromStorage();
       document.getElementById('auth-overlay').style.display = 'none';
-      document.getElementById('user-email-display').textContent = session.user.email;
       document.body.classList.add('on-library');
       updateShelfPickerLabel(); updateViewPickerIcon(); render();
       await loadFromSupabase();
@@ -2991,18 +2993,12 @@ For each book:
       const btn  = document.getElementById('user-picker-btn');
       if (!drop) return;
       drop.innerHTML = `
-        <div class="user-email" id="user-email-display"></div>
+        <div class="user-email">${esc(_userEmail)}</div>
         <div class="spd-divider"></div>
         <button class="spd-item" onclick="signOut()">sign out</button>
       `;
-      const { data: { session } } = _sb.auth.getSession?.() || {};
       drop.classList.add('open');
       if (btn) btn.classList.add('active');
-      // Populate email
-      _sb.auth.getSession().then(({ data: { session } }) => {
-        const el = drop.querySelector('.user-email');
-        if (el && session) el.textContent = session.user.email;
-      });
     }
     function closeUserPicker() {
       document.getElementById('user-picker-drop')?.classList.remove('open');
