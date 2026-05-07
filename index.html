@@ -1205,7 +1205,7 @@
   </div>
 
   <!-- AUTH OVERLAY -->
-  <div id="auth-overlay" style="display:none; position:fixed; inset:0; background:var(--bg); z-index:500; align-items:center; justify-content:center;">
+  <div id="auth-overlay" style="display:flex; position:fixed; inset:0; background:var(--bg); z-index:500; align-items:center; justify-content:center;">
     <div class="auth-card">
       <div class="auth-logo">bookshelf</div>
       <input class="auth-input" type="email" id="auth-email" placeholder="email" autocomplete="email">
@@ -1253,9 +1253,15 @@
     const SUPABASE_URL = 'https://jknktlasejgfdeanrxed.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_YBWnnJq_Zwipp5kLJS3CBw_vDPsrOZy';
     const SB_TABLE = 'book_shelf_data';
-    const _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-      auth: { storageKey: 'book-shelf-auth' }
-    });
+    let _sb;
+    try {
+      _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+        auth: { storageKey: 'book-shelf-auth' }
+      });
+    } catch(e) {
+      console.error('Supabase failed to initialize:', e);
+      document.getElementById('auth-error').textContent = 'Failed to load. Check your connection and refresh.';
+    }
 
     let _sbSaveTimer = null;
     let _lastSavedAt = 0;
@@ -3063,6 +3069,7 @@ For each book:
       const errEl    = document.getElementById('auth-error');
       const btn      = document.getElementById('auth-submit');
       errEl.textContent = '';
+      if (!_sb) { errEl.textContent = 'Failed to load. Refresh the page.'; return; }
       btn.disabled = true; btn.textContent = 'signing in…';
       const { data, error } = await _sb.auth.signInWithPassword({ email, password });
       btn.disabled = false; btn.textContent = 'sign in';
@@ -3088,6 +3095,7 @@ For each book:
     // ── INIT ──────────────────────────────────────────────────────────────────
 
     (async () => {
+      if (!_sb) return; // Supabase failed to load; auth overlay already visible
       const { data: { session } } = await _sb.auth.getSession();
       if (session) {
         await startApp(session);
