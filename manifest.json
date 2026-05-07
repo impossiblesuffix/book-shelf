@@ -1,0 +1,12 @@
+{
+  "name": "Bookshelf",
+  "short_name": "Bookshelf",
+  "description": "Your personal library",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F8F5EF",
+  "theme_color": "#F8F5EF",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
