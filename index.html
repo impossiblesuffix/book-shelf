@@ -1273,16 +1273,20 @@
       _lastSavedAt = now;
       const payload = { books, uid, libView, libSort, libManualOrder, customShelves, csUid, activeShelfId, savedAt: now };
       try { localStorage.setItem(KEY, JSON.stringify(payload)); } catch(e) {}
-      if (!_dataLoaded) return;
+      if (!_dataLoaded || !_sb) return;
       clearTimeout(_sbSaveTimer);
-      _sbSaveTimer = setTimeout(async () => {
+      _sbSaveTimer = setTimeout(() => pushToSupabase(payload), 1500);
+    }
+
+    async function pushToSupabase(payload) {
+      try {
         const { data: { session } } = await _sb.auth.getSession();
         if (!session) return;
-        const { error } = await _sb.from(SB_TABLE).upsert(
-          { id: session.user.id, data: payload }, { onConflict: 'id' }
-        );
-        if (error) console.error('Supabase save failed:', error);
-      }, 1500);
+        const { error } = await _sb.from(SB_TABLE).upsert({ id: session.user.id, data: payload });
+        if (error) { console.error('Supabase save failed:', error); toast('sync error — check connection'); }
+      } catch(e) {
+        console.error('Supabase save exception:', e);
+      }
     }
 
     function applyStorageData(d) {
@@ -1306,15 +1310,17 @@
       } catch(e) {}
     }
 
-    async function loadFromSupabase() {
+    async function loadFromSupabase(userId) {
       try {
-        const { data, error } = await _sb.from(SB_TABLE).select('data').maybeSingle();
+        const { data, error } = await _sb.from(SB_TABLE).select('data').eq('id', userId).maybeSingle();
         if (data?.data) {
           applyStorageData(data.data);
           try { localStorage.setItem(KEY, JSON.stringify(data.data)); } catch(e) {}
         } else {
-          loadFromStorage();   // first login — migrate from localStorage
+          // Nothing in Supabase yet — push whatever localStorage has
           _dataLoaded = true;
+          const payload = { books, uid, libView, libSort, libManualOrder, customShelves, csUid, activeShelfId, savedAt: _lastSavedAt };
+          if (books.length) pushToSupabase(payload);
         }
       } catch(e) {
         console.warn('Supabase load failed, using localStorage', e);
@@ -1345,7 +1351,7 @@
       document.getElementById('auth-overlay').style.display = 'none';
       document.body.classList.add('on-library');
       updateShelfPickerLabel(); updateViewPickerIcon(); render();
-      await loadFromSupabase();
+      await loadFromSupabase(session.user.id);
       updateShelfPickerLabel(); updateViewPickerIcon(); render();
       setupRealtime(session.user.id);
     }
@@ -3082,9 +3088,9 @@ For each book:
     });
 
     document.addEventListener('visibilitychange', async () => {
-      if (document.visibilityState !== 'hidden') {
+      if (document.visibilityState !== 'hidden' && _sb) {
         const { data: { session } } = await _sb.auth.getSession();
-        if (session) { await loadFromSupabase(); updateViewPickerIcon(); updateShelfPickerLabel(); render(); }
+        if (session) { await loadFromSupabase(session.user.id); updateViewPickerIcon(); updateShelfPickerLabel(); render(); }
       }
     });
 
