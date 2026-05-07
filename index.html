@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>bookshelf</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#F8F5EF">
@@ -35,6 +35,8 @@
       --ease:         0.2s ease;
     }
 
+    html { overflow-x: hidden; overscroll-behavior-x: none; }
+
     body {
       font-family: 'Quicksand', sans-serif;
       background: var(--bg);
@@ -42,6 +44,8 @@
       min-height: 100vh;
       font-weight: 500;
       -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+      touch-action: pan-y;
     }
 
     /* ── NAV ─────────────────────────────────────── */
@@ -1364,6 +1368,12 @@
       ['#9E7A8A','#7E5A6A'],['#7A9E9A','#5A7E7A'],
     ];
 
+    function coverSrc(url, size = 'M') {
+      if (!url) return null;
+      if (url.includes('covers.openlibrary.org')) return url.replace(/-[LMS]\.jpg$/, `-${size}.jpg`);
+      return url;
+    }
+
     function bookPalette(title) {
       let h = 0;
       for (let i = 0; i < title.length; i++) h = (h * 31 + title.charCodeAt(i)) | 0;
@@ -1426,7 +1436,7 @@
         </div>
       </div>`;
       if (!book.coverUrl) return ph;
-      return `<img src="${esc(book.coverUrl)}" alt="${esc(book.title)}" loading="lazy"
+      return `<img src="${esc(coverSrc(book.coverUrl))}" alt="${esc(book.title)}" loading="lazy"
         onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
         ${ph.replace('display:flex','display:none')}`;
     }
@@ -1489,7 +1499,7 @@
     function queueItemHTML(book, i, total) {
       const [c1, c2] = bookPalette(book.title);
       const coverInner = book.coverUrl
-        ? `<img src="${esc(book.coverUrl)}" alt="" loading="lazy">`
+        ? `<img src="${esc(coverSrc(book.coverUrl))}" alt="" loading="lazy">`
         : `<div class="qi-cover-ph" style="background:linear-gradient(140deg,${c1},${c2})"><span style="font-size:13px;font-weight:700;color:rgba(255,255,255,.8)">${esc(initials(book.title))}</span></div>`;
       const upBtn   = i > 0       ? `<button class="qi-btn" onclick="event.stopPropagation();moveQ('${esc(book.id)}',-1)">↑</button>` : `<button class="qi-btn qi-btn-ghost" disabled>↑</button>`;
       const downBtn = i < total-1 ? `<button class="qi-btn" onclick="event.stopPropagation();moveQ('${esc(book.id)}',1)">↓</button>`  : `<button class="qi-btn qi-btn-ghost" disabled>↓</button>`;
@@ -1509,7 +1519,7 @@
     function wishlistItemHTML(book, i, total) {
       const [c1, c2] = bookPalette(book.title);
       const coverInner = book.coverUrl
-        ? `<img src="${esc(book.coverUrl)}" alt="" loading="lazy">`
+        ? `<img src="${esc(coverSrc(book.coverUrl))}" alt="" loading="lazy">`
         : `<div class="qi-cover-ph" style="background:linear-gradient(140deg,${c1},${c2})"><span style="font-size:13px;font-weight:700;color:rgba(255,255,255,.8)">${esc(initials(book.title))}</span></div>`;
       const upBtn   = i > 0       ? `<button class="qi-btn" onclick="event.stopPropagation();moveWL('${esc(book.id)}',-1)">↑</button>` : `<button class="qi-btn qi-btn-ghost" disabled>↑</button>`;
       const downBtn = i < total-1 ? `<button class="qi-btn" onclick="event.stopPropagation();moveWL('${esc(book.id)}',1)">↓</button>`  : `<button class="qi-btn qi-btn-ghost" disabled>↓</button>`;
@@ -1662,7 +1672,7 @@
     function listRowHTML(book) {
       const [c1, c2] = bookPalette(book.title);
       const coverInner = book.coverUrl
-        ? `<img src="${esc(book.coverUrl)}" alt="" loading="lazy">`
+        ? `<img src="${esc(coverSrc(book.coverUrl))}" alt="" loading="lazy">`
         : `<div class="lv-ph" style="background:linear-gradient(140deg,${c1},${c2})">${esc(initials(book.title))}</div>`;
       let starsHTML = '';
       if (book.rating) {
