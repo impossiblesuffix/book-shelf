@@ -809,6 +809,8 @@
     .auth-btn:hover { background: var(--accent-h); }
     .auth-btn:disabled { opacity: .6; cursor: default; }
     .auth-error { font-size: 12px; color: #c47a7a; min-height: 16px; text-align: center; }
+    .auth-export { background: none; border: none; font-family: inherit; font-size: 11px; color: var(--text-3); cursor: pointer; text-align: center; transition: color var(--ease); margin-top: 4px; }
+    .auth-export:hover { color: var(--text-2); }
 
     /* User dropdown */
     .user-email { padding: 7px 10px 4px; font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
@@ -1210,9 +1212,11 @@
       <input class="auth-input" type="password" id="auth-password" placeholder="password" autocomplete="current-password">
       <button class="auth-btn" id="auth-submit">sign in</button>
       <div class="auth-error" id="auth-error"></div>
+      <button class="auth-export" onclick="doExport()">export local data ↓</button>
     </div>
   </div>
 
+  <input type="file" id="import-file" accept=".json" style="display:none">
   <div class="ctx-menu" id="ctx-menu"></div>
   <div class="toast" id="toast"></div>
 
@@ -2983,6 +2987,41 @@ For each book:
       if (!document.getElementById('ctx-menu')?.contains(e.target)) closeCtxMenu();
     }, true);
 
+    // ── EXPORT / IMPORT ───────────────────────────────────────────────────────
+
+    function doExport() {
+      const raw = localStorage.getItem(KEY);
+      if (!raw) { toast('nothing to export'); return; }
+      const blob = new Blob([raw], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `bookshelf-export-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function doImport() {
+      closeUserPicker();
+      document.getElementById('import-file').value = '';
+      document.getElementById('import-file').click();
+    }
+
+    async function handleImportFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const d = JSON.parse(text);
+        if (!Array.isArray(d.books)) throw new Error('invalid file');
+        applyStorageData(d);
+        save();
+        updateShelfPickerLabel(); updateViewPickerIcon(); render();
+        toast(`imported ${d.books.length} book${d.books.length !== 1 ? 's' : ''}`);
+      } catch(err) {
+        toast('import failed — invalid file');
+      }
+    }
+
     // ── USER PICKER ───────────────────────────────────────────────────────────
 
     function toggleUserPicker() {
@@ -2997,8 +3036,12 @@ For each book:
       drop.innerHTML = `
         <div class="user-email">${esc(_userEmail)}</div>
         <div class="spd-divider"></div>
+        <button class="spd-item" onclick="doExport();closeUserPicker()">export data ↓</button>
+        <button class="spd-item" onclick="doImport()">import data ↑</button>
+        <div class="spd-divider"></div>
         <button class="spd-item" onclick="signOut()">sign out</button>
       `;
+      document.getElementById('import-file').addEventListener('change', handleImportFile, { once: true });
       drop.classList.add('open');
       if (btn) btn.classList.add('active');
     }
