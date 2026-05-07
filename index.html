@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -784,6 +785,34 @@
     .spd-edit-done { color: var(--accent); }
     .spd-edit-done:hover { color: var(--accent-h); background: var(--accent-light); }
 
+    /* ── AUTH ────────────────────────────────────────── */
+    .auth-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r-lg); padding: 36px 32px;
+      display: flex; flex-direction: column; gap: 10px;
+      width: 100%; max-width: 320px; box-shadow: var(--sh-lg);
+    }
+    .auth-logo { font-size: 20px; font-weight: 300; letter-spacing: .12em; text-align: center; margin-bottom: 8px; }
+    .auth-input {
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--r-sm); padding: 10px 14px;
+      font-family: inherit; font-size: 13px; color: var(--text); outline: none;
+      transition: border-color var(--ease);
+    }
+    .auth-input:focus { border-color: var(--accent); }
+    .auth-btn {
+      background: var(--accent); color: #fff; border: none;
+      border-radius: var(--r-sm); padding: 11px; cursor: pointer;
+      font-family: inherit; font-size: 13px; font-weight: 700;
+      margin-top: 4px; transition: background var(--ease);
+    }
+    .auth-btn:hover { background: var(--accent-h); }
+    .auth-btn:disabled { opacity: .6; cursor: default; }
+    .auth-error { font-size: 12px; color: #c47a7a; min-height: 16px; text-align: center; }
+
+    /* User dropdown */
+    .user-email { padding: 7px 10px 4px; font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+
     /* ── CONTEXT MENU ────────────────────────────────── */
     .ctx-menu {
       display: none; position: fixed; z-index: 400;
@@ -1025,6 +1054,14 @@
       <div class="shelf-picker-drop drop-end" id="view-picker-drop"></div>
     </div>
 
+    <!-- User / account -->
+    <div class="shelf-picker" id="user-picker">
+      <button class="nav-tool" id="user-picker-btn" onclick="toggleUserPicker()" title="Account">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="5.5" r="3"/><path d="M1.5 14.5c0-3.314 2.91-6 6.5-6s6.5 2.686 6.5 6"/></svg>
+      </button>
+      <div class="shelf-picker-drop drop-end" id="user-picker-drop"></div>
+    </div>
+
   </nav>
 
   <main class="main">
@@ -1165,6 +1202,17 @@
     </div>
   </div>
 
+  <!-- AUTH OVERLAY -->
+  <div id="auth-overlay" style="display:none; position:fixed; inset:0; background:var(--bg); z-index:500; align-items:center; justify-content:center;">
+    <div class="auth-card">
+      <div class="auth-logo">bookshelf</div>
+      <input class="auth-input" type="email" id="auth-email" placeholder="email" autocomplete="email">
+      <input class="auth-input" type="password" id="auth-password" placeholder="password" autocomplete="current-password">
+      <button class="auth-btn" id="auth-submit">sign in</button>
+      <div class="auth-error" id="auth-error"></div>
+    </div>
+  </div>
+
   <div class="ctx-menu" id="ctx-menu"></div>
   <div class="toast" id="toast"></div>
 
@@ -1198,27 +1246,93 @@
     let _ctxBookId = null;
     let _lpTimer = null;
     const KEY = 'bookshelf_v1';
+    const SUPABASE_URL = 'https://jknktlasejgfdeanrxed.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_YBWnnJq_Zwipp5kLJS3CBw_vDPsrOZy';
+    const SB_TABLE = 'book_shelf_data';
+    const _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    let _sbSaveTimer = null;
+    let _lastSavedAt = 0;
+    let _dataLoaded  = false;
+    let _realtimeChannel = null;
 
     function save() {
-      localStorage.setItem(KEY, JSON.stringify({ books, uid, libView, libSort, libManualOrder, customShelves, csUid, activeShelfId }));
+      const now = Date.now();
+      _lastSavedAt = now;
+      const payload = { books, uid, libView, libSort, libManualOrder, customShelves, csUid, activeShelfId, savedAt: now };
+      try { localStorage.setItem(KEY, JSON.stringify(payload)); } catch(e) {}
+      if (!_dataLoaded) return;
+      clearTimeout(_sbSaveTimer);
+      _sbSaveTimer = setTimeout(async () => {
+        const { data: { session } } = await _sb.auth.getSession();
+        if (!session) return;
+        const { error } = await _sb.from(SB_TABLE).upsert(
+          { id: session.user.id, data: payload }, { onConflict: 'id' }
+        );
+        if (error) console.error('Supabase save failed:', error);
+      }, 1500);
     }
 
-    function load() {
+    function applyStorageData(d) {
+      _dataLoaded = true;
+      if (typeof d.savedAt === 'number' && d.savedAt > _lastSavedAt) _lastSavedAt = d.savedAt;
+      books         = d.books          || [];
+      uid           = d.uid            || 1;
+      libView       = (d.libView && d.libView !== 'coverflow') ? d.libView : 'grid-lg';
+      libSort       = d.libSort        || 'manual';
+      libManualOrder= d.libManualOrder || [];
+      customShelves = d.customShelves  || [];
+      csUid         = d.csUid          || 1;
+      activeShelfId = d.activeShelfId  || null;
+      books.forEach(b => { if (b.finished === undefined) b.finished = (b.status === 'done'); });
+    }
+
+    function loadFromStorage() {
       try {
         const d = JSON.parse(localStorage.getItem(KEY) || 'null');
-        if (d) {
-          books = d.books || [];
-          uid   = d.uid || 1;
-          libView = (d.libView && d.libView !== 'coverflow') ? d.libView : 'grid-lg';
-          libSort = d.libSort || 'manual';
-          libManualOrder = d.libManualOrder || [];
-          customShelves = d.customShelves || [];
-          csUid = d.csUid || 1;
-          activeShelfId = d.activeShelfId || null;
-          // migrate: books added before the 'finished' field was introduced
-          books.forEach(b => { if (b.finished === undefined) b.finished = (b.status === 'done'); });
-        }
+        if (d) applyStorageData(d);
       } catch(e) {}
+    }
+
+    async function loadFromSupabase() {
+      try {
+        const { data } = await _sb.from(SB_TABLE).select('data').single();
+        if (data?.data) {
+          applyStorageData(data.data);
+          try { localStorage.setItem(KEY, JSON.stringify(data.data)); } catch(e) {}
+        } else {
+          loadFromStorage();   // first login — migrate from localStorage
+          _dataLoaded = true;
+        }
+      } catch(e) {
+        console.warn('Supabase load failed, using localStorage', e);
+        loadFromStorage();
+      }
+    }
+
+    function setupRealtime(userId) {
+      if (_realtimeChannel) { _sb.removeChannel(_realtimeChannel); _realtimeChannel = null; }
+      _realtimeChannel = _sb.channel(`bs-${userId}`)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: SB_TABLE, filter: `id=eq.${userId}` },
+          payload => {
+            const remote = payload.new?.data;
+            if (!remote || (remote.savedAt && remote.savedAt <= _lastSavedAt)) return;
+            applyStorageData(remote);
+            try { localStorage.setItem(KEY, JSON.stringify(remote)); } catch(e) {}
+            updateViewPickerIcon(); updateShelfPickerLabel(); render();
+          })
+        .subscribe();
+    }
+
+    async function startApp(session) {
+      loadFromStorage();
+      document.getElementById('auth-overlay').style.display = 'none';
+      document.getElementById('user-email-display').textContent = session.user.email;
+      document.body.classList.add('on-library');
+      updateShelfPickerLabel(); updateViewPickerIcon(); render();
+      await loadFromSupabase();
+      updateShelfPickerLabel(); updateViewPickerIcon(); render();
+      setupRealtime(session.user.id);
     }
 
     // ── PALETTES ──────────────────────────────────────────────────────────────
@@ -2821,6 +2935,7 @@ For each book:
         if (document.getElementById('shelf-picker-drop')?.classList.contains('open')) { closeShelfPicker(); return; }
         if (document.getElementById('sort-picker-drop')?.classList.contains('open'))  { closeSortPicker();  return; }
         if (document.getElementById('view-picker-drop')?.classList.contains('open'))  { closeViewPicker();  return; }
+        if (document.getElementById('user-picker-drop')?.classList.contains('open'))  { closeUserPicker();  return; }
         if (document.getElementById('detail-overlay').classList.contains('open'))     { closeDetail();      return; }
         if (document.getElementById('add-overlay').classList.contains('open'))        { closeAdd();         return; }
         if (document.getElementById('photo-import-overlay').classList.contains('open')) { closePhotoImport(); return; }
@@ -2831,6 +2946,7 @@ For each book:
       if (!document.getElementById('shelf-picker')?.contains(e.target)) closeShelfPicker();
       if (!document.getElementById('sort-picker')?.contains(e.target))  closeSortPicker();
       if (!document.getElementById('view-picker')?.contains(e.target))  closeViewPicker();
+      if (!document.getElementById('user-picker')?.contains(e.target))  closeUserPicker();
     }, true);
 
     // ── LONG-PRESS + RIGHT-CLICK ──────────────────────────────────────────────
@@ -2863,17 +2979,80 @@ For each book:
       if (!document.getElementById('ctx-menu')?.contains(e.target)) closeCtxMenu();
     }, true);
 
+    // ── USER PICKER ───────────────────────────────────────────────────────────
+
+    function toggleUserPicker() {
+      const drop = document.getElementById('user-picker-drop');
+      drop?.classList.contains('open') ? closeUserPicker() : openUserPicker();
+    }
+    function openUserPicker() {
+      closeShelfPicker(); closeSortPicker(); closeViewPicker();
+      const drop = document.getElementById('user-picker-drop');
+      const btn  = document.getElementById('user-picker-btn');
+      if (!drop) return;
+      drop.innerHTML = `
+        <div class="user-email" id="user-email-display"></div>
+        <div class="spd-divider"></div>
+        <button class="spd-item" onclick="signOut()">sign out</button>
+      `;
+      const { data: { session } } = _sb.auth.getSession?.() || {};
+      drop.classList.add('open');
+      if (btn) btn.classList.add('active');
+      // Populate email
+      _sb.auth.getSession().then(({ data: { session } }) => {
+        const el = drop.querySelector('.user-email');
+        if (el && session) el.textContent = session.user.email;
+      });
+    }
+    function closeUserPicker() {
+      document.getElementById('user-picker-drop')?.classList.remove('open');
+      document.getElementById('user-picker-btn')?.classList.remove('active');
+    }
+    async function signOut() {
+      await _sb.auth.signOut();
+      location.reload();
+    }
+
+    // ── AUTH ──────────────────────────────────────────────────────────────────
+
+    document.getElementById('auth-submit').addEventListener('click', async () => {
+      const email    = document.getElementById('auth-email').value.trim();
+      const password = document.getElementById('auth-password').value;
+      const errEl    = document.getElementById('auth-error');
+      const btn      = document.getElementById('auth-submit');
+      errEl.textContent = '';
+      btn.disabled = true; btn.textContent = 'signing in…';
+      const { data, error } = await _sb.auth.signInWithPassword({ email, password });
+      btn.disabled = false; btn.textContent = 'sign in';
+      if (error) { errEl.textContent = error.message; return; }
+      await startApp(data.session);
+    });
+
+    document.getElementById('auth-password').addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('auth-submit').click();
+    });
+
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState !== 'hidden') {
+        const { data: { session } } = await _sb.auth.getSession();
+        if (session) { await loadFromSupabase(); updateViewPickerIcon(); updateShelfPickerLabel(); render(); }
+      }
+    });
+
     // ── SERVICE WORKER ────────────────────────────────────────────────────────
 
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
     // ── INIT ──────────────────────────────────────────────────────────────────
 
-    load();
-    document.body.classList.add('on-library'); // library is the default tab
-    updateShelfPickerLabel();
-    updateViewPickerIcon();
-    render();
+    (async () => {
+      const { data: { session } } = await _sb.auth.getSession();
+      if (session) {
+        await startApp(session);
+      } else {
+        document.getElementById('auth-overlay').style.display = 'flex';
+      }
+    })();
   </script>
 </body>
 </html>
