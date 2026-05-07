@@ -278,14 +278,12 @@
       cursor: pointer; z-index: 6;
       opacity: 0; transition: opacity .15s, background .15s, border-color .15s;
     }
-    .card:hover .qf-btn { opacity: 1; }
     .card.finished .qf-btn { background: #2daa5f; border-color: #2daa5f; }
     .sel-mode .qf-btn { display: none; }
     .lv-row .qf-btn {
       position: static; opacity: 0; flex-shrink: 0;
       background: transparent; border-color: var(--border-2); color: var(--text-3);
     }
-    .lv-row:hover .qf-btn { opacity: 1; }
     .lv-row.finished .qf-btn { background: #2daa5f; border-color: #2daa5f; color: #fff; }
 
 
@@ -353,7 +351,6 @@
 
     /* Subtle scale-up on hover instead of lift (covers are flush) */
     #sec-library .card { position: relative; transition: transform .18s ease; }
-    #sec-library .card:hover { transform: scale(1.05); z-index: 2; }
 
     /* Title overlay that fades in on hover */
     .lib-title-overlay {
@@ -370,11 +367,9 @@
       overflow: hidden;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     }
-    #sec-library .card:hover .lib-title-overlay { opacity: 1; }
 
     /* ── BOOK CARD ───────────────────────────────── */
     .card { cursor: pointer; transition: transform var(--ease); }
-    .card:hover { transform: translateY(-4px); }
 
     .card-cover {
       position: relative;
@@ -385,7 +380,17 @@
       transition: box-shadow var(--ease);
     }
 
-    .card:hover .card-cover { box-shadow: var(--sh-md); }
+    /* Hover effects only on pointer devices — prevents accidental highlights while scrolling on touch */
+    @media (hover: hover) {
+      #sec-library .card:hover { transform: scale(1.05); z-index: 2; }
+      #sec-library .card:hover .lib-title-overlay { opacity: 1; }
+      .card:hover { transform: translateY(-4px); }
+      .card:hover .card-cover { box-shadow: var(--sh-md); }
+      .card:hover .qf-btn { opacity: 1; }
+      .qi:hover { box-shadow: var(--sh-sm); border-color: var(--border-2); }
+      .lv-row:hover { background: var(--surface-2); }
+      .lv-row:hover .qf-btn { opacity: 1; }
+    }
     .card-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
     /* drag state */
@@ -478,8 +483,6 @@
       transition: box-shadow var(--ease), border-color var(--ease);
     }
 
-    .qi:hover { box-shadow: var(--sh-sm); border-color: var(--border-2); }
-
     .qi-num  { font-size: 12px; font-weight: 700; color: var(--text-3); min-width: 18px; text-align: center; }
 
     .qi-cover { width: 60px; height: 90px; border-radius: var(--r-sm); overflow: hidden; flex-shrink: 0; }
@@ -512,7 +515,6 @@
     }
 
     .lv-row:first-child { border-top: 1px solid var(--border); }
-    .lv-row:hover { background: var(--surface-2); }
     .lv-row.dragging    { opacity: .35; }
     .lv-row.drag-target { border-top: 2px solid var(--accent); margin-top: -1px; }
 
@@ -1298,7 +1300,7 @@
       if (typeof d.savedAt === 'number' && d.savedAt > _lastSavedAt) _lastSavedAt = d.savedAt;
       books         = d.books          || [];
       uid           = d.uid            || 1;
-      libView       = (d.libView && d.libView !== 'coverflow') ? d.libView : 'grid-lg';
+      libView       = (d.libView && d.libView !== 'coverflow') ? d.libView : (window.innerWidth <= 600 ? 'grid-sm' : 'grid-lg');
       libSort       = d.libSort        || 'manual';
       libManualOrder= d.libManualOrder || [];
       customShelves = d.customShelves  || [];
