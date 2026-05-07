@@ -1302,7 +1302,7 @@
 
     async function loadFromSupabase() {
       try {
-        const { data } = await _sb.from(SB_TABLE).select('data').single();
+        const { data, error } = await _sb.from(SB_TABLE).select('data').maybeSingle();
         if (data?.data) {
           applyStorageData(data.data);
           try { localStorage.setItem(KEY, JSON.stringify(data.data)); } catch(e) {}
@@ -1313,6 +1313,7 @@
       } catch(e) {
         console.warn('Supabase load failed, using localStorage', e);
         loadFromStorage();
+        _dataLoaded = true;
       }
     }
 
