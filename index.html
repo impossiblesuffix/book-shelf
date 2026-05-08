@@ -1580,7 +1580,7 @@
         const queue   = books.filter(b => b.status === 'queue').sort((a,b) => a.qp - b.qp);
         return [...reading, ...done, ...queue];
       }
-      const s = [...books];
+      const s = books.filter(b => b.status === 'done' || b.status === 'reading');
       if (libSort === 'title')  s.sort((a,b) => (a.title||'').localeCompare(b.title||''));
       if (libSort === 'author') s.sort((a,b) => (a.author||'').localeCompare(b.author||''));
       if (libSort === 'date')   s.sort((a,b) => (b.dateFinished||b.dateStarted||'').localeCompare(a.dateFinished||a.dateStarted||''));
