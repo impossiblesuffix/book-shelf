@@ -973,14 +973,25 @@
     .sim-title { font-size: 11px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .06em; }
     .sim-scroll { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
     .sim-scroll::-webkit-scrollbar { display: none; }
-    .sim-card { flex: 0 0 80px; display: flex; flex-direction: column; gap: 5px; cursor: default; }
-    .sim-cover { width: 80px; aspect-ratio: 2/3; border-radius: 6px; overflow: hidden; background: var(--border); flex-shrink: 0; }
+    .sim-card { flex: 0 0 80px; display: flex; flex-direction: column; gap: 5px; cursor: pointer; }
+    .sim-card:hover .sim-cover { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .sim-card.sim-selected .sim-cover { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .sim-cover { width: 80px; aspect-ratio: 2/3; border-radius: 6px; overflow: hidden; background: var(--border); flex-shrink: 0; transition: outline var(--ease); }
     .sim-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .sim-cover-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 22px; }
     .sim-info { font-size: 10px; line-height: 1.3; color: var(--text-2); }
     .sim-info strong { font-size: 11px; color: var(--text); display: block; }
     .sim-add { margin-top: 4px; font-size: 10px; padding: 4px 7px; }
     .sim-on-shelf { font-size: 10px; color: var(--text-2); margin-top: 4px; text-align: center; }
+    .sim-detail { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; gap: 12px; }
+    .sim-detail-cover { flex: 0 0 64px; }
+    .sim-detail-cover img { width: 64px; aspect-ratio: 2/3; object-fit: cover; border-radius: 5px; display: block; }
+    .sim-detail-cover-ph { width: 64px; aspect-ratio: 2/3; background: var(--border); border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+    .sim-detail-body { flex: 1; min-width: 0; }
+    .sim-detail-title { font-size: 13px; font-weight: 600; line-height: 1.3; margin-bottom: 2px; }
+    .sim-detail-author { font-size: 11px; color: var(--text-2); margin-bottom: 6px; }
+    .sim-detail-meta { font-size: 10px; color: var(--text-2); margin-bottom: 8px; }
+    .sim-detail-desc { font-size: 11px; line-height: 1.55; color: var(--text-2); max-height: 110px; overflow-y: auto; margin-bottom: 10px; scrollbar-width: thin; }
 
     /* ── TOAST ───────────────────────────────────── */
     .toast {
@@ -2708,11 +2719,15 @@
     // ── SIMILAR BOOKS ─────────────────────────────────────────────────────────
 
     let simBookId = null;
+    let simResults = [];
+    let simSelectedIdx = -1;
 
     function openSimilar(id) {
       const b = books.find(x => x.id === id);
       if (!b) return;
       simBookId = id;
+      simResults = [];
+      simSelectedIdx = -1;
       const sec = document.getElementById('similar-section');
       if (!sec) return;
       sec.innerHTML = `<div class="sim-box">
@@ -2730,96 +2745,142 @@
       const sec = document.getElementById('similar-section');
       if (sec) sec.innerHTML = '';
       simBookId = null;
+      simResults = [];
+      simSelectedIdx = -1;
     }
 
     async function doSimilarSearch(b) {
       const el = document.getElementById('sim-results');
       if (!el) return;
-      const queries = [];
-      if (b.author) queries.push(`inauthor:"${b.author}"`);
-      if (b.genre)  queries.push(`subject:"${b.genre}"`);
-      if (!queries.length) queries.push(`"${b.title}"`);
 
       try {
+        // Step 1: look up this book on Google Books to get its categories
+        let categories = [];
+        if (b.title) {
+          const q = b.author ? `intitle:${b.title} inauthor:${b.author}` : `intitle:${b.title}`;
+          const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=3&printType=books`);
+          const d = await r.json();
+          if (d.items?.length) categories = d.items[0].volumeInfo?.categories || [];
+        }
+
+        // Step 2: run parallel searches by author + by category
         const seen = new Set([b.title.toLowerCase()]);
-        const results = [];
+        const gathered = [];
+        const queries = [];
+        if (b.author) queries.push(`inauthor:${b.author}`);
+        if (categories.length) queries.push(`subject:${categories[0].split('/')[0].trim()}`);
+        else if (b.genre) queries.push(`subject:${b.genre}`);
+        if (!queries.length) queries.push(b.title);
+
         await Promise.all(queries.map(async q => {
-          const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=8&printType=books`;
-          const res = await fetch(url);
-          const data = await res.json();
-          for (const item of data.items || []) {
+          const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=12&printType=books`);
+          const d = await r.json();
+          for (const item of d.items || []) {
             const info = item.volumeInfo || {};
             const title = info.title || '';
             const key = title.toLowerCase();
             if (!key || seen.has(key)) continue;
             seen.add(key);
-            const author = (info.authors || []).join(', ');
-            const year = (info.publishedDate || '').slice(0, 4);
-            const coverUrl = (info.imageLinks?.thumbnail || '').replace('http:', 'https:').replace('&edge=curl', '');
-            results.push({ title, author, year, coverUrl, gbId: item.id });
+            gathered.push({
+              title,
+              author:      (info.authors || []).join(', '),
+              year:        (info.publishedDate || '').slice(0, 4),
+              coverUrl:    (info.imageLinks?.thumbnail || '').replace('http:', 'https:').replace('&edge=curl', ''),
+              description: info.description || '',
+              categories:  (info.categories || []).join(', '),
+              pages:       info.pageCount || '',
+              gbId:        item.id,
+            });
           }
         }));
 
-        if (!results.length) {
+        if (!gathered.length) {
           el.innerHTML = '<div class="search-msg">no similar books found</div>';
           return;
         }
 
-        const onShelf = new Set(books.map(x => x.title.toLowerCase()));
-        el.innerHTML = `<div class="sim-scroll">${
-          results.slice(0, 10).map(r => {
-            const exists = onShelf.has(r.title.toLowerCase());
-            const cover = r.coverUrl
-              ? `<img src="${esc(r.coverUrl)}" alt="" loading="lazy">`
-              : `<div class="sim-cover-placeholder">📖</div>`;
-            const btn = exists
-              ? `<div class="sim-on-shelf">on shelf</div>`
-              : `<button class="btn btn-ghost btn-sm sim-add" onclick="addFromSimilar(${JSON.stringify(r.title)},${JSON.stringify(r.author)},${JSON.stringify(r.coverUrl)},${JSON.stringify(r.year)})">+ wishlist</button>`;
-            return `<div class="sim-card">
-              <div class="sim-cover">${cover}</div>
-              <div class="sim-info"><strong>${esc(r.title)}</strong>${r.author ? esc(r.author) : ''}</div>
-              ${btn}
-            </div>`;
-          }).join('')
-        }</div>`;
+        simResults = gathered.slice(0, 12);
+        renderSimCards();
       } catch(e) {
-        el.innerHTML = '<div class="search-msg">unavailable — check your connection</div>';
+        const el2 = document.getElementById('sim-results');
+        if (el2) el2.innerHTML = '<div class="search-msg">unavailable — check your connection</div>';
       }
     }
 
-    function addFromSimilar(title, author, coverUrl, year) {
-      const existing = books.find(b => b.title.toLowerCase() === title.toLowerCase());
+    function renderSimCards() {
+      const el = document.getElementById('sim-results');
+      if (!el) return;
+      const onShelf = new Set(books.map(x => x.title.toLowerCase()));
+      el.innerHTML = `<div class="sim-scroll">${
+        simResults.map((r, i) => {
+          const selected = i === simSelectedIdx ? ' sim-selected' : '';
+          const cover = r.coverUrl
+            ? `<img src="${esc(r.coverUrl)}" alt="" loading="lazy">`
+            : `<div class="sim-cover-placeholder">📖</div>`;
+          return `<div class="sim-card${selected}" onclick="openSimDetail(${i})">
+            <div class="sim-cover">${cover}</div>
+            <div class="sim-info"><strong>${esc(r.title)}</strong>${r.author ? esc(r.author) : ''}</div>
+          </div>`;
+        }).join('')
+      }</div>${simSelectedIdx >= 0 ? renderSimDetailHTML(simSelectedIdx) : ''}`;
+    }
+
+    function renderSimDetailHTML(i) {
+      const r = simResults[i];
+      if (!r) return '';
+      const onShelf = books.some(x => x.title.toLowerCase() === r.title.toLowerCase());
+      const cover = r.coverUrl
+        ? `<img src="${esc(r.coverUrl)}" alt="">`
+        : `<div class="sim-detail-cover-ph">📖</div>`;
+      const meta = [r.year, r.pages ? `${r.pages} pages` : '', r.categories].filter(Boolean).join(' · ');
+      const btn = onShelf
+        ? `<div style="font-size:11px;color:var(--text-2)">already on your shelf</div>`
+        : `<button class="btn btn-ghost btn-sm" onclick="addFromSimilar(${i})">+ add to wishlist</button>`;
+      return `<div class="sim-detail">
+        <div class="sim-detail-cover">${cover}</div>
+        <div class="sim-detail-body">
+          <div class="sim-detail-title">${esc(r.title)}</div>
+          <div class="sim-detail-author">${esc(r.author)}</div>
+          ${meta ? `<div class="sim-detail-meta">${esc(meta)}</div>` : ''}
+          ${r.description ? `<div class="sim-detail-desc">${esc(r.description)}</div>` : ''}
+          ${btn}
+        </div>
+      </div>`;
+    }
+
+    function openSimDetail(i) {
+      simSelectedIdx = (simSelectedIdx === i) ? -1 : i;
+      renderSimCards();
+      if (simSelectedIdx >= 0) {
+        const detail = document.querySelector('.sim-detail');
+        if (detail) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    function addFromSimilar(i) {
+      const r = simResults[i];
+      if (!r) return;
+      const existing = books.find(b => b.title.toLowerCase() === r.title.toLowerCase());
       if (existing) { toast('already on shelf'); return; }
       const newBook = {
         id: 'b' + uid++,
-        title,
-        author,
-        year,
-        coverUrl: coverUrl || '',
-        status: 'wishlist',
-        rating: 0,
-        notes: '',
-        genre: '',
-        pages: '',
-        wlp: books.filter(b => b.status === 'wishlist').length,
+        title:     r.title,
+        author:    r.author,
+        year:      r.year,
+        coverUrl:  r.coverUrl || '',
+        status:    'wishlist',
+        rating:    0,
+        notes:     '',
+        genre:     r.categories ? r.categories.split(',')[0].trim() : '',
+        pages:     r.pages ? String(r.pages) : '',
+        wlp:       books.filter(b => b.status === 'wishlist').length,
         dateAdded: today(),
       };
       books.push(newBook);
       save();
       render();
-      toast(`"${title}" added to wishlist`);
-      // refresh similar panel — update button states
-      const sec = document.getElementById('similar-section');
-      if (sec && simBookId) {
-        const cards = sec.querySelectorAll('.sim-card');
-        cards.forEach(card => {
-          const strong = card.querySelector('strong');
-          if (strong && strong.textContent === title) {
-            const btn = card.querySelector('.sim-add');
-            if (btn) { btn.outerHTML = '<div class="sim-on-shelf">on shelf</div>'; }
-          }
-        });
-      }
+      toast(`"${r.title}" added to wishlist`);
+      renderSimCards();
     }
 
     // ── QUEUE REORDER ─────────────────────────────────────────────────────────
