@@ -2754,42 +2754,31 @@
       if (!el) return;
 
       try {
-        // Step 1: look up this book on Google Books to get its categories
-        let categories = [];
-        if (b.title) {
-          const q = b.author ? `intitle:${b.title} inauthor:${b.author}` : `intitle:${b.title}`;
-          const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=3&printType=books`);
-          const d = await r.json();
-          if (d.items?.length) categories = d.items[0].volumeInfo?.categories || [];
-        }
-
-        // Step 2: run parallel searches by author + by category
         const seen = new Set([b.title.toLowerCase()]);
         const gathered = [];
-        const queries = [];
-        if (b.author) queries.push(`inauthor:${b.author}`);
-        if (categories.length) queries.push(`subject:${categories[0].split('/')[0].trim()}`);
-        else if (b.genre) queries.push(`subject:${b.genre}`);
-        if (!queries.length) queries.push(b.title);
+        const fields = 'key,title,author_name,first_publish_year,cover_i,subject';
+        const urls = [];
+        if (b.author) urls.push(`https://openlibrary.org/search.json?author=${encodeURIComponent(b.author)}&fields=${fields}&limit=12`);
+        if (b.genre)  urls.push(`https://openlibrary.org/search.json?subject=${encodeURIComponent(b.genre)}&fields=${fields}&limit=12`);
+        if (!urls.length) urls.push(`https://openlibrary.org/search.json?q=${encodeURIComponent(b.title)}&fields=${fields}&limit=12`);
 
-        await Promise.all(queries.map(async q => {
-          const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=12&printType=books`);
+        await Promise.all(urls.map(async url => {
+          const r = await fetch(url);
           const d = await r.json();
-          for (const item of d.items || []) {
-            const info = item.volumeInfo || {};
-            const title = info.title || '';
-            const key = title.toLowerCase();
-            if (!key || seen.has(key)) continue;
-            seen.add(key);
+          for (const item of d.docs || []) {
+            const title = item.title || '';
+            if (!title || seen.has(title.toLowerCase())) continue;
+            seen.add(title.toLowerCase());
+            const cid = item.cover_i;
             gathered.push({
               title,
-              author:      (info.authors || []).join(', '),
-              year:        (info.publishedDate || '').slice(0, 4),
-              coverUrl:    (info.imageLinks?.thumbnail || '').replace('http:', 'https:').replace('&edge=curl', ''),
-              description: info.description || '',
-              categories:  (info.categories || []).join(', '),
-              pages:       info.pageCount || '',
-              gbId:        item.id,
+              olKey:    item.key || '',
+              author:   (item.author_name || []).join(', '),
+              year:     item.first_publish_year ? String(item.first_publish_year) : '',
+              coverUrl: cid ? `https://covers.openlibrary.org/b/id/${cid}-M.jpg` : '',
+              coverLg:  cid ? `https://covers.openlibrary.org/b/id/${cid}-L.jpg` : '',
+              subjects: (item.subject || []).slice(0, 3).join(', '),
+              // description fetched lazily on click
             });
           }
         }));
@@ -2803,14 +2792,13 @@
         renderSimCards();
       } catch(e) {
         const el2 = document.getElementById('sim-results');
-        if (el2) el2.innerHTML = '<div class="search-msg">unavailable — check your connection</div>';
+        if (el2) el2.innerHTML = '<div class="search-msg">search unavailable — check connection</div>';
       }
     }
 
     function renderSimCards() {
       const el = document.getElementById('sim-results');
       if (!el) return;
-      const onShelf = new Set(books.map(x => x.title.toLowerCase()));
       el.innerHTML = `<div class="sim-scroll">${
         simResults.map((r, i) => {
           const selected = i === simSelectedIdx ? ' sim-selected' : '';
@@ -2832,28 +2820,54 @@
       const cover = r.coverUrl
         ? `<img src="${esc(r.coverUrl)}" alt="">`
         : `<div class="sim-detail-cover-ph">📖</div>`;
-      const meta = [r.year, r.pages ? `${r.pages} pages` : '', r.categories].filter(Boolean).join(' · ');
+      const meta = [r.year, r.subjects].filter(Boolean).join(' · ');
       const btn = onShelf
         ? `<div style="font-size:11px;color:var(--text-2)">already on your shelf</div>`
         : `<button class="btn btn-ghost btn-sm" onclick="addFromSimilar(${i})">+ add to wishlist</button>`;
+      const descHTML = !('description' in r)
+        ? `<div class="sim-detail-desc" style="font-style:italic;opacity:.5">loading description…</div>`
+        : r.description
+          ? `<div class="sim-detail-desc">${esc(r.description)}</div>`
+          : '';
       return `<div class="sim-detail">
         <div class="sim-detail-cover">${cover}</div>
         <div class="sim-detail-body">
           <div class="sim-detail-title">${esc(r.title)}</div>
           <div class="sim-detail-author">${esc(r.author)}</div>
           ${meta ? `<div class="sim-detail-meta">${esc(meta)}</div>` : ''}
-          ${r.description ? `<div class="sim-detail-desc">${esc(r.description)}</div>` : ''}
+          ${descHTML}
           ${btn}
         </div>
       </div>`;
     }
 
-    function openSimDetail(i) {
-      simSelectedIdx = (simSelectedIdx === i) ? -1 : i;
+    async function openSimDetail(i) {
+      if (simSelectedIdx === i) {
+        simSelectedIdx = -1;
+        renderSimCards();
+        return;
+      }
+      simSelectedIdx = i;
       renderSimCards();
-      if (simSelectedIdx >= 0) {
-        const detail = document.querySelector('.sim-detail');
-        if (detail) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      const detail = document.querySelector('.sim-detail');
+      if (detail) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+      // fetch description lazily if not yet loaded
+      const r = simResults[i];
+      if (r && !('description' in r) && r.olKey) {
+        try {
+          const res = await fetch(`https://openlibrary.org${r.olKey}.json`);
+          const d = await res.json();
+          let desc = d.description || '';
+          if (typeof desc === 'object') desc = desc.value || '';
+          r.description = desc;
+        } catch(e) {
+          r.description = '';
+        }
+        if (simSelectedIdx === i) renderSimCards();
+      } else if (r && !('description' in r)) {
+        r.description = '';
+        if (simSelectedIdx === i) renderSimCards();
       }
     }
 
@@ -2867,12 +2881,12 @@
         title:     r.title,
         author:    r.author,
         year:      r.year,
-        coverUrl:  r.coverUrl || '',
+        coverUrl:  r.coverLg || r.coverUrl || '',
         status:    'wishlist',
         rating:    0,
         notes:     '',
-        genre:     r.categories ? r.categories.split(',')[0].trim() : '',
-        pages:     r.pages ? String(r.pages) : '',
+        genre:     r.subjects ? r.subjects.split(',')[0].trim() : '',
+        pages:     '',
         wlp:       books.filter(b => b.status === 'wishlist').length,
         dateAdded: today(),
       };
