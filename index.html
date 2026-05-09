@@ -967,6 +967,21 @@
 
     .cs-url-row { display: flex; gap: 8px; align-items: center; }
 
+    /* ── SIMILAR BOOKS ───────────────────────────── */
+    .sim-box { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r); padding: 14px; margin-top: 16px; }
+    .sim-hd  { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .sim-title { font-size: 11px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .06em; }
+    .sim-scroll { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
+    .sim-scroll::-webkit-scrollbar { display: none; }
+    .sim-card { flex: 0 0 80px; display: flex; flex-direction: column; gap: 5px; cursor: default; }
+    .sim-cover { width: 80px; aspect-ratio: 2/3; border-radius: 6px; overflow: hidden; background: var(--border); flex-shrink: 0; }
+    .sim-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .sim-cover-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+    .sim-info { font-size: 10px; line-height: 1.3; color: var(--text-2); }
+    .sim-info strong { font-size: 11px; color: var(--text); display: block; }
+    .sim-add { margin-top: 4px; font-size: 10px; padding: 4px 7px; }
+    .sim-on-shelf { font-size: 10px; color: var(--text-2); margin-top: 4px; text-align: center; }
+
     /* ── TOAST ───────────────────────────────────── */
     .toast {
       position: fixed; bottom: 88px; right: 24px;
@@ -2062,7 +2077,8 @@
               <span>${esc(s.name)}</span>
             </label>
           `).join('')}
-        </div>` : ''}`;
+        </div>` : ''}
+        <div id="similar-section"></div>`;
 
       let ft = '';
       if (b.status === 'wishlist') {
@@ -2074,7 +2090,7 @@
       } else {
         ft = `<div class="dp-ft-row"><button class="btn btn-ghost" style="flex:1" onclick="changeStatus('${esc(b.id)}','reading')">re-reading</button><button class="btn btn-ghost" style="flex:1" onclick="changeStatus('${esc(b.id)}','queue')">back to queue</button></div>`;
       }
-      ft += `<div class="dp-ft-row"><button class="btn btn-danger btn-sm" onclick="armDeleteBook('${esc(b.id)}')">remove from shelf</button></div>`;
+      ft += `<div class="dp-ft-row"><button class="btn btn-ghost btn-sm" style="flex:1" onclick="openSimilar('${esc(b.id)}')">find similar books</button><button class="btn btn-danger btn-sm" onclick="armDeleteBook('${esc(b.id)}')">remove from shelf</button></div>`;
       document.getElementById('dp-ft').innerHTML = ft;
     }
 
@@ -2687,6 +2703,123 @@
       b.coverUrl = url;
       save(); render(); closeCoverSearch(); renderDetail(b);
       toast('cover updated');
+    }
+
+    // ── SIMILAR BOOKS ─────────────────────────────────────────────────────────
+
+    let simBookId = null;
+
+    function openSimilar(id) {
+      const b = books.find(x => x.id === id);
+      if (!b) return;
+      simBookId = id;
+      const sec = document.getElementById('similar-section');
+      if (!sec) return;
+      sec.innerHTML = `<div class="sim-box">
+        <div class="sim-hd">
+          <span class="sim-title">find similar books</span>
+          <button class="btn-x" style="width:24px;height:24px;font-size:16px" onclick="closeSimilar()">×</button>
+        </div>
+        <div id="sim-results"><div class="search-msg"><div class="spinner"></div><br>searching…</div></div>
+      </div>`;
+      sec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      doSimilarSearch(b);
+    }
+
+    function closeSimilar() {
+      const sec = document.getElementById('similar-section');
+      if (sec) sec.innerHTML = '';
+      simBookId = null;
+    }
+
+    async function doSimilarSearch(b) {
+      const el = document.getElementById('sim-results');
+      if (!el) return;
+      const queries = [];
+      if (b.author) queries.push(`inauthor:"${b.author}"`);
+      if (b.genre)  queries.push(`subject:"${b.genre}"`);
+      if (!queries.length) queries.push(`"${b.title}"`);
+
+      try {
+        const seen = new Set([b.title.toLowerCase()]);
+        const results = [];
+        await Promise.all(queries.map(async q => {
+          const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=8&printType=books`;
+          const res = await fetch(url);
+          const data = await res.json();
+          for (const item of data.items || []) {
+            const info = item.volumeInfo || {};
+            const title = info.title || '';
+            const key = title.toLowerCase();
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            const author = (info.authors || []).join(', ');
+            const year = (info.publishedDate || '').slice(0, 4);
+            const coverUrl = (info.imageLinks?.thumbnail || '').replace('http:', 'https:').replace('&edge=curl', '');
+            results.push({ title, author, year, coverUrl, gbId: item.id });
+          }
+        }));
+
+        if (!results.length) {
+          el.innerHTML = '<div class="search-msg">no similar books found</div>';
+          return;
+        }
+
+        const onShelf = new Set(books.map(x => x.title.toLowerCase()));
+        el.innerHTML = `<div class="sim-scroll">${
+          results.slice(0, 10).map(r => {
+            const exists = onShelf.has(r.title.toLowerCase());
+            const cover = r.coverUrl
+              ? `<img src="${esc(r.coverUrl)}" alt="" loading="lazy">`
+              : `<div class="sim-cover-placeholder">📖</div>`;
+            const btn = exists
+              ? `<div class="sim-on-shelf">on shelf</div>`
+              : `<button class="btn btn-ghost btn-sm sim-add" onclick="addFromSimilar(${JSON.stringify(r.title)},${JSON.stringify(r.author)},${JSON.stringify(r.coverUrl)},${JSON.stringify(r.year)})">+ wishlist</button>`;
+            return `<div class="sim-card">
+              <div class="sim-cover">${cover}</div>
+              <div class="sim-info"><strong>${esc(r.title)}</strong>${r.author ? esc(r.author) : ''}</div>
+              ${btn}
+            </div>`;
+          }).join('')
+        }</div>`;
+      } catch(e) {
+        el.innerHTML = '<div class="search-msg">unavailable — check your connection</div>';
+      }
+    }
+
+    function addFromSimilar(title, author, coverUrl, year) {
+      const existing = books.find(b => b.title.toLowerCase() === title.toLowerCase());
+      if (existing) { toast('already on shelf'); return; }
+      const newBook = {
+        id: 'b' + uid++,
+        title,
+        author,
+        year,
+        coverUrl: coverUrl || '',
+        status: 'wishlist',
+        rating: 0,
+        notes: '',
+        genre: '',
+        pages: '',
+        wlp: books.filter(b => b.status === 'wishlist').length,
+        dateAdded: today(),
+      };
+      books.push(newBook);
+      save();
+      render();
+      toast(`"${title}" added to wishlist`);
+      // refresh similar panel — update button states
+      const sec = document.getElementById('similar-section');
+      if (sec && simBookId) {
+        const cards = sec.querySelectorAll('.sim-card');
+        cards.forEach(card => {
+          const strong = card.querySelector('strong');
+          if (strong && strong.textContent === title) {
+            const btn = card.querySelector('.sim-add');
+            if (btn) { btn.outerHTML = '<div class="sim-on-shelf">on shelf</div>'; }
+          }
+        });
+      }
     }
 
     // ── QUEUE REORDER ─────────────────────────────────────────────────────────
