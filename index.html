@@ -2755,13 +2755,14 @@
 
       try {
         const fields = 'key,title,author_name,first_publish_year,cover_i,subject';
-        // Use only the first named author so "A and B" style strings don't break the query
-        const primaryAuthor = (b.author || '').split(/,|\sand\s|&/i)[0].trim();
+        // Split compound author strings ("A and B", "A, B") into individual names
+        const authors = (b.author || '').split(/,|\sand\s|&/i).map(a => a.trim()).filter(Boolean);
+        const primary = authors[0] || '';
 
-        // Step 1: look up this book on OL to discover its subjects
+        // Step 1: look up this book on OL to get its subjects
         let bookSubjects = [];
-        if (b.title) {
-          const lq = [b.title, primaryAuthor].filter(Boolean).join(' ');
+        if (b.title && primary) {
+          const lq = `${b.title} ${primary}`;
           const lr = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(lq)}&fields=title,subject&limit=5`);
           const ld = await lr.json();
           const match = (ld.docs || []).find(d => d.title?.toLowerCase() === b.title.toLowerCase()) || ld.docs?.[0];
@@ -2772,36 +2773,32 @@
           }
         }
 
-        // Step 2: build queries — subject first, then author
-        const seen = new Set([b.title.toLowerCase()]);
-        const gathered = [];
-        const urls = [];
+        // Step 2: build tasks — { url, authorFilter }
+        // authorFilter = the name string that must fully appear in at least one item author
+        const tasks = [];
 
         if (bookSubjects.length) {
-          urls.push(`https://openlibrary.org/search.json?subject=${encodeURIComponent(bookSubjects[0])}&fields=${fields}&limit=12`);
+          tasks.push({ url: `https://openlibrary.org/search.json?subject=${encodeURIComponent(bookSubjects[0])}&fields=${fields}&limit=12`, authorFilter: null });
         } else if (b.genre) {
-          urls.push(`https://openlibrary.org/search.json?subject=${encodeURIComponent(b.genre)}&fields=${fields}&limit=12`);
-        } else {
-          // No subject data: broad title search (finds books with same concept in title)
-          urls.push(`https://openlibrary.org/search.json?q=${encodeURIComponent(b.title)}&fields=${fields}&limit=12`);
+          tasks.push({ url: `https://openlibrary.org/search.json?subject=${encodeURIComponent(b.genre)}&fields=${fields}&limit=12`, authorFilter: null });
+        }
+        // Search each named author separately (handles co-authored books)
+        for (const author of authors.slice(0, 2)) {
+          tasks.push({ url: `https://openlibrary.org/search.json?author=${encodeURIComponent(author)}&fields=${fields}&limit=10`, authorFilter: author });
         }
 
-        if (primaryAuthor) {
-          urls.push(`https://openlibrary.org/search.json?author=${encodeURIComponent(primaryAuthor)}&fields=${fields}&limit=10`);
-        }
+        const seen = new Set([b.title.toLowerCase()]);
+        const gathered = [];
 
-        await Promise.all(urls.map(async url => {
+        await Promise.all(tasks.map(async ({ url, authorFilter }) => {
           const r = await fetch(url);
           const d = await r.json();
-          const isAuthorUrl = url.includes('/search.json?author=');
           for (const item of d.docs || []) {
             const title = item.title || '';
             if (!title || seen.has(title.toLowerCase())) continue;
-            // For author search, require all parts of the author name to match
-            // one of the item's actual authors (prevents "Klein" matching "Ezra Pound")
-            if (isAuthorUrl && primaryAuthor) {
+            if (authorFilter) {
               const itemAuthors = (item.author_name || []).map(a => a.toLowerCase());
-              const parts = primaryAuthor.toLowerCase().split(/\s+/);
+              const parts = authorFilter.toLowerCase().split(/\s+/);
               if (!itemAuthors.some(a => parts.every(p => a.includes(p)))) continue;
             }
             seen.add(title.toLowerCase());
