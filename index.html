@@ -2754,20 +2754,56 @@
       if (!el) return;
 
       try {
+        const fields = 'key,title,author_name,first_publish_year,cover_i,subject';
+        // Use only the first named author so "A and B" style strings don't break the query
+        const primaryAuthor = (b.author || '').split(/,|\sand\s|&/i)[0].trim();
+
+        // Step 1: look up this book on OL to discover its subjects
+        let bookSubjects = [];
+        if (b.title) {
+          const lq = [b.title, primaryAuthor].filter(Boolean).join(' ');
+          const lr = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(lq)}&fields=title,subject&limit=5`);
+          const ld = await lr.json();
+          const match = (ld.docs || []).find(d => d.title?.toLowerCase() === b.title.toLowerCase()) || ld.docs?.[0];
+          if (match) {
+            bookSubjects = (match.subject || [])
+              .filter(s => !s.match(/new york times|bestseller|nyt:|ebook|accessible|large.?print|^[a-z]{2}$/i))
+              .slice(0, 2);
+          }
+        }
+
+        // Step 2: build queries — subject first, then author
         const seen = new Set([b.title.toLowerCase()]);
         const gathered = [];
-        const fields = 'key,title,author_name,first_publish_year,cover_i,subject';
         const urls = [];
-        if (b.author) urls.push(`https://openlibrary.org/search.json?author=${encodeURIComponent(b.author)}&fields=${fields}&limit=12`);
-        if (b.genre)  urls.push(`https://openlibrary.org/search.json?subject=${encodeURIComponent(b.genre)}&fields=${fields}&limit=12`);
-        if (!urls.length) urls.push(`https://openlibrary.org/search.json?q=${encodeURIComponent(b.title)}&fields=${fields}&limit=12`);
+
+        if (bookSubjects.length) {
+          urls.push(`https://openlibrary.org/search.json?subject=${encodeURIComponent(bookSubjects[0])}&fields=${fields}&limit=12`);
+        } else if (b.genre) {
+          urls.push(`https://openlibrary.org/search.json?subject=${encodeURIComponent(b.genre)}&fields=${fields}&limit=12`);
+        } else {
+          // No subject data: broad title search (finds books with same concept in title)
+          urls.push(`https://openlibrary.org/search.json?q=${encodeURIComponent(b.title)}&fields=${fields}&limit=12`);
+        }
+
+        if (primaryAuthor) {
+          urls.push(`https://openlibrary.org/search.json?author=${encodeURIComponent(primaryAuthor)}&fields=${fields}&limit=10`);
+        }
 
         await Promise.all(urls.map(async url => {
           const r = await fetch(url);
           const d = await r.json();
+          const isAuthorUrl = url.includes('/search.json?author=');
           for (const item of d.docs || []) {
             const title = item.title || '';
             if (!title || seen.has(title.toLowerCase())) continue;
+            // For author search, require all parts of the author name to match
+            // one of the item's actual authors (prevents "Klein" matching "Ezra Pound")
+            if (isAuthorUrl && primaryAuthor) {
+              const itemAuthors = (item.author_name || []).map(a => a.toLowerCase());
+              const parts = primaryAuthor.toLowerCase().split(/\s+/);
+              if (!itemAuthors.some(a => parts.every(p => a.includes(p)))) continue;
+            }
             seen.add(title.toLowerCase());
             const cid = item.cover_i;
             gathered.push({
@@ -2777,8 +2813,9 @@
               year:     item.first_publish_year ? String(item.first_publish_year) : '',
               coverUrl: cid ? `https://covers.openlibrary.org/b/id/${cid}-M.jpg` : '',
               coverLg:  cid ? `https://covers.openlibrary.org/b/id/${cid}-L.jpg` : '',
-              subjects: (item.subject || []).slice(0, 3).join(', '),
-              // description fetched lazily on click
+              subjects: (item.subject || [])
+                .filter(s => !s.match(/new york times|bestseller|nyt:|ebook|accessible/i))
+                .slice(0, 3).join(', '),
             });
           }
         }));
@@ -2792,7 +2829,7 @@
         renderSimCards();
       } catch(e) {
         const el2 = document.getElementById('sim-results');
-        if (el2) el2.innerHTML = '<div class="search-msg">search unavailable — check connection</div>';
+        if (el2) el2.innerHTML = '<div class="search-msg">search unavailable</div>';
       }
     }
 
